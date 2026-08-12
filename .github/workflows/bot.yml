@@ -1,4 +1,4 @@
-name: Bot Trading Automatico ETH
+name: Bot Trading Automatico
 
 on:
   schedule:
@@ -21,15 +21,20 @@ jobs:
     - name: Instalar Librerías
       run: |
         python -m pip install --upgrade pip
-        pip install ccxt pandas numpy
+        pip install ccxt pandas numpy requests
 
-    - name: Ejecutar Bot ETH
-      run: python bot_eth.py
+    - name: Ejecutar Bot
+      env:
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        if [ -f "bot_github.py" ]; then python bot_github.py; fi
+        if [ -f "bot_eth.py" ]; then python bot_eth.py; fi
 
-    - name: Guardar Cambios del Estado e Historial en GitHub
+    - name: Guardar Cambios en GitHub
       run: |
         git config --global user.name "GitHub Action Bot"
         git config --global user.email "bot@github.com"
         git add estado_bot.json historial_trades.csv
-        git commit -m "Auto-update estado e historial bot ETH" || exit 0
+        git commit -m "Auto-update estado e historial bot" || exit 0
         git push
