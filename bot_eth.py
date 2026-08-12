@@ -3,13 +3,22 @@ import pandas as pd
 import numpy as np
 import json
 import os
+import requests
 from datetime import datetime
 
-# Archivos de persistencia para ETH
 ARCHIVO_ESTADO = "estado_bot.json"
 ARCHIVO_HISTORIAL = "historial_trades.csv"
 
-# Cargar o inicializar estado desde JSON
+def enviar_telegram(mensaje):
+    token = os.environ.get("TELEGRAM_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if token and chat_id:
+        try:
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
+            requests.post(url, json={"chat_id": chat_id, "text": mensaje, "parse_mode": "Markdown"})
+        except Exception as e:
+            print(f"Error enviando Telegram: {e}")
+
 if os.path.exists(ARCHIVO_ESTADO):
     with open(ARCHIVO_ESTADO, "r") as f:
         estado = json.load(f)
@@ -21,7 +30,6 @@ else:
         "capital_simulado": 100.0
     }
 
-# Inicializar historial CSV si no existe
 if not os.path.exists(ARCHIVO_HISTORIAL):
     df_historial = pd.DataFrame(columns=[
         'fecha_hora', 'tipo_salida', 'precio_entrada', 'precio_salida', 
@@ -29,7 +37,6 @@ if not os.path.exists(ARCHIVO_HISTORIAL):
     ])
     df_historial.to_csv(ARCHIVO_HISTORIAL, index=False)
 
-# Conexión a KuCoin para ETH/USDT
 exchange = ccxt.kucoin()
 simbolo = "ETH/USDT"
 temporalidad = "1h"
@@ -42,7 +49,6 @@ except Exception as e:
 
 df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
 
-# Indicadores (RSI y ATR)
 delta = df['close'].diff()
 gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
 loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -55,7 +61,6 @@ low_close = (df['low'] - df['close'].shift()).abs()
 ranges = pd.concat([high_low, high_close, low_close], axis=1)
 df['ATR'] = ranges.max(axis=1).rolling(14).mean()
 
-# Evaluación de la última vela cerrada
 ultima_vela = df.iloc[-2]
 precio_actual = ultima_vela['close']
 rsi_actual = ultima_vela['RSI']
@@ -76,12 +81,14 @@ def registrar_trade(tipo_salida, precio_salida, rendimiento_pct, capital_final):
     }])
     nuevo_registro.to_csv(ARCHIVO_HISTORIAL, mode='a', header=False, index=False)
 
-# Lógica de Trading (misma regla: RSI < 30 entrada, RSI >= 50 o Stop Loss salida)
 if estado["posicion_abierta"]:
     if ultima_vela['low'] <= estado["stop_loss"]:
         rendimiento = (estado["stop_loss"] - estado["precio_entrada"]) / estado["precio_entrada"] - comision
         estado["capital_simulado"] *= (1 + rendimiento)
-        print(f"❌ STOP LOSS TOCADO en ${estado['stop_loss']:.2f}. Capital: ${estado['capital_simulado']:.2f} USDT")
+        
+        msg = f"❌ *STOP LOSS TOCADO (ETH)*\n• Salida: `${estado['stop_loss']:.2f}`\n• Rendimiento: `{rendimiento*100:.2f}%`\n• Capital: `${estado['capital_simulado']:.2f} USDT`"
+        print(msg)
+        enviar_telegram(msg)
         
         registrar_trade('STOP_LOSS', estado['stop_loss'], rendimiento, estado["capital_simulado"])
         estado["posicion_abierta"] = False
@@ -89,7 +96,10 @@ if estado["posicion_abierta"]:
     elif rsi_actual >= 50:
         rendimiento = (precio_actual - estado["precio_entrada"]) / estado["precio_entrada"] - comision
         estado["capital_simulado"] *= (1 + rendimiento)
-        print(f"🎯 TAKE PROFIT/RSI TOCADO en ${precio_actual:.2f}. Capital: ${estado['capital_simulado']:.2f} USDT")
+        
+        msg = f"🎯 *TAKE PROFIT / RSI TOCADO (ETH)*\n• Salida: `${precio_actual:.2f}`\n• Rendimiento: `{rendimiento*100:.2f}%`\n• Capital: `${estado['capital_simulado']:.2f} USDT`"
+        print(msg)
+        enviar_telegram(msg)
         
         registrar_trade('TAKE_PROFIT', precio_actual, rendimiento, estado["capital_simulado"])
         estado["posicion_abierta"] = False
@@ -99,9 +109,11 @@ elif not estado["posicion_abierta"] and rsi_actual < 30:
     estado["precio_entrada"] = precio_actual
     estado["stop_loss"] = precio_actual - (1.5 * atr_actual)
     estado["capital_simulado"] *= (1 - comision)
-    print(f"🚀 COMPRA SIMULADA ETH en ${precio_actual:.2f} | Stop Loss a ${estado['stop_loss']:.2f}")
+    
+    msg = f"🚀 *NUEVA COMPRA SIMULADA (ETH)*\n• Precio Entrada: `${precio_actual:.2f}`\n• Stop Loss: `${estado['stop_loss']:.2f}`\n• RSI Actual: `{rsi_actual:.2f}`"
+    print(msg)
+    enviar_telegram(msg)
 
-# Guardar estado actualizado
 with open(ARCHIVO_ESTADO, "w") as f:
     json.dump(estado, f, indent=4)
 
